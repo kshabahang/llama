@@ -79,9 +79,38 @@ top_p =  0.95
 max_seq_len = 512
 max_batch_size = 32
 
-local_rank, world_size = setup_model_parallel()
-if local_rank > 0:
-    sys.stdout = open(os.devnull, "w")
+#local_rank, world_size = setup_model_parallel()
+#if local_rank > 0:
+#    sys.stdout = open(os.devnull, "w")
+
+
+start_time = time.time()
+checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
+assert world_size == len(
+    checkpoints
+), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {world_size}"
+ckpt_path = checkpoints[local_rank]
+print("Loading")
+checkpoint = torch.load(ckpt_path, map_location="cpu")
+with open(Path(ckpt_dir) / "params.json", "r") as f:
+    params = json.loads(f.read())
+                                                                                    
+model_args: ModelArgs = ModelArgs(
+    max_seq_len=max_seq_len, max_batch_size=max_batch_size, **params
+)
+tokenizer = Tokenizer(model_path=tokenizer_path)
+model_args.vocab_size = tokenizer.n_words
+# torch.set_default_tensor_type(torch.cuda.HalfTensor)
+torch.set_default_tensor_type(torch.BFloat16Tensor)
+model = Transformer(model_args)
+torch.set_default_tensor_type(torch.FloatTensor)
+model.load_state_dict(checkpoint, strict=False)
+
+sys.exit()
+
+generator = LLaMA(model, tokenizer)
+print(f"Loaded in {time.time() - start_time:.2f} seconds")
+
 
 generator = load(
     ckpt_dir, tokenizer_path, local_rank, world_size, max_seq_len, max_batch_size
